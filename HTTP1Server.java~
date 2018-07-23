@@ -1,0 +1,897 @@
+package project2HPPT1;
+
+
+/// Matthew Kalita 
+// summer cs352 
+//ru id 172001228 
+// project 1 partial http 1 server epsilon edision 
+
+
+
+
+import java.net.*;
+import java.nio.CharBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.*;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.io.*;
+import java.text.*;
+
+
+
+public class HTTP1Server {
+	
+	
+	public static void main (String args[]) throws Exception{
+		int portNum = 0;
+		
+		
+		
+		
+		try {
+			portNum = Integer.parseInt(args[0]);
+		}
+		
+	 catch (NumberFormatException conect){
+		
+		System.out.print(" cannot format "+ portNum);
+		
+	    System.exit(-1);
+	
+}// end of catch 
+			
+		
+		// create Threadpool
+		ThreadPoolServer serv = new ThreadPoolServer(portNum);
+		new Thread(serv).start();
+		
+		// sleep for pool server threads to function properly 
+		try {
+			Thread.sleep(20*1000);
+		}catch(InterruptedException e){
+			e.printStackTrace();
+		}
+	}
+	//end of main }
+
+}
+class ThreadPoolServer implements Runnable{
+	
+	
+	
+	
+	 protected boolean done=false; //used to end and check 
+	 protected int portNumber ;
+	protected int counter = 0;  // used to count incoming threads 
+	protected Thread current =null;// current thread 
+	 
+	//create blocking queue for threads 
+	LinkedBlockingQueue<Runnable> servQueue = new LinkedBlockingQueue<Runnable>(5);	
+	
+// create a thread pool with 5 threads hanging max 50 threads idle 5 min 
+	ThreadPoolExecutor myPool =new ThreadPoolExecutor ( 5, 50 ,300000, TimeUnit.MILLISECONDS,servQueue);
+	
+	
+	
+	
+	
+	
+	
+	
+	 //object constructor instantiates the object 
+ ThreadPoolServer (int portNumber){
+		this.portNumber=portNumber;
+		
+		
+		
+		
+	}// end of constructor 
+	
+	
+	
+	
+	public void run(){
+		
+		synchronized(this){
+			this.current=Thread.currentThread();
+		}
+		
+		// declare sockets to get instantiated in try catch 
+		ServerSocket serverSocket=null;
+		Socket ClientSocket = null;
+		
+		
+		try {
+			serverSocket =new ServerSocket(portNumber);
+		}
+		catch(IOException | IllegalStateException e)
+		{
+			if(done){
+				System.out.println(" Error creating clientSocket or thread   :" +e.getMessage());
+				return;
+			}
+		}// end of first try 
+		
+		
+		// to handle possible response to client 
+		
+		DataOutputStream clientOut =null;
+		
+		while (true){
+			
+			try{
+				   //check counter if 50 will deny connection 
+				if(counter==50){
+					 
+					clientOut =new DataOutputStream(ClientSocket.getOutputStream());
+					  clientOut.writeBytes("HTTP/1.0 503 Service Unavailable");
+					  clientOut.close();
+					  ClientSocket.close();
+					
+					
+				}// end of if 
+				else {
+					
+					
+					ClientSocket=serverSocket.accept();
+					counter++;
+			//		System.out.println("********** conection sucessful **********");
+					this.myPool.execute(new WorkThread(ClientSocket));
+				}
+			}/// end of try 
+			catch(IOException e){
+				
+				if (done){
+					System.out.println("server stopped running");
+					break;
+					
+				}// if done 
+				
+				
+			}// end of catch 
+			
+			
+		}// end of while 
+		
+		
+		// shut server off 
+		this.myPool.shutdown();
+		try {
+			 this.done= true;
+			 serverSocket.close();
+			 return;
+		} // end try 
+		catch (IOException e ){
+			System.out.println(" closing socket error " + e.getLocalizedMessage());
+		}
+		
+		
+	}// end of run method 
+}// end of ThreadPool
+
+//__________________________________________________________
+//all the thread work below in worker thread
+
+
+
+class WorkThread implements Runnable {
+	
+	// all variables needed for run method  and mime content 
+	public String sendHeader = null; /// string header to send as responce 
+	public byte[] messageBody =null;  // array of bytes to send in body of client message 
+	public static final String MIME_HTML = "text/html";
+	public static final String  MIME_PLAINTEXT = "text/plain";
+	public static final String  MIME_TEXT ="text/plain";
+	public static final String MIME_GIF = "image/gif";
+	public static final String MIME_JPG ="image/jpg";
+	public static final String MIME_PNG = "image/png";
+	public static final String MIME_PDF ="application/pdf";
+	public static final String MIME_OCTET_STREAM = "application/octet-stream";
+	public static final String MIME_XGZIP ="application/x_gzip";
+	public static final String MIME_ZIP = "application/zip";
+	public String dataQuery= null;  /// public global for post data 
+	String fromUser;
+	String UserAgent;
+	public int lengthOfContent;  // global for parsing content length 
+		public int contentLength;
+	 HashMap<String, String> env = new HashMap<String, String>();
+	
+	
+	
+	Socket wSocket;
+	// constructor for class 
+	WorkThread( Socket wSocket){
+		this.wSocket=wSocket;
+		
+	}
+	
+	
+
+	@Override
+	public void run() {
+		// TODO Auto-generated method stub
+		//method variables 
+		Date       ModifiedSince = null;
+		String request = null;
+		String requestHeader = null;
+		DataOutputStream   clientOut = null;
+		BufferedReader   clientIn = null;
+		String responce = null;
+		 String headerReponce = null;
+		String [] postHeaderRequest = new String [2];
+		postHeaderRequest[0]=null;
+		postHeaderRequest[1]=null;
+		int contLen =-1;
+		 
+		try {
+			  wSocket.setSoTimeout(3000); // set time out to 3 sec
+			  clientOut  = new DataOutputStream (wSocket.getOutputStream());
+			  clientIn = new BufferedReader (new InputStreamReader(wSocket.getInputStream()));
+			  request = clientIn.readLine();
+			  requestHeader = clientIn.readLine();
+			  if (requestHeader != null && requestHeader.startsWith("If-Modified-Since")){
+				  ModifiedSince = parseRequestHead(requestHeader);
+				  }// end of header if 
+			  else if (request.startsWith("POST")&& requestHeader != null) 
+			  {//loop for post or gets with content ect 
+		loop:	  while(requestHeader !=null){
+				  
+				  if (requestHeader.startsWith("From:")){
+					  
+					  fromUser=requestHeader;
+					 // System.out.println(fromUser);
+					  }
+				  if (requestHeader.startsWith("User-Agent:")){
+					  UserAgent=requestHeader;
+					//  System.out.println(UserAgent);
+					  }
+				 
+				  if (requestHeader.startsWith("Content-Type:") ){
+					  postHeaderRequest[0]=requestHeader;
+					  }
+				  if ( requestHeader.startsWith("Content-Length:")){
+						  postHeaderRequest[1]=requestHeader;
+						  }
+				  if (requestHeader.equals("")){
+					  if(postHeaderRequest[1]==null){
+						  break loop;
+					  }
+					  // try parse for 0 content to break loop 
+					  try{
+			            	int index = postHeaderRequest[1].indexOf(':') + 1;
+			            	String len = postHeaderRequest[1].substring(index).trim();
+			             contLen = Integer.parseInt(len);
+			         //   	System.out.println(contLen  + "---contentLength");
+			            }
+			            catch (NumberFormatException except) 
+			            {System.out.print("cant parse");
+			            }
+			           
+					  //for time outs 
+					  if(contLen ==0){
+						  break loop;}
+					  
+						 dataQuery=clientIn.readLine();
+						// System.out.println(dataQuery);
+						 break loop;
+					  }// end if 
+				  requestHeader = clientIn.readLine();
+			  }// end of while loop 
+			  }//end if post 
+			  	if (dataQuery !=null){			  
+				 dataQuery= urlDecode(dataQuery);}
+			  //	dataQuery  += "\n";
+			  	//  decodes pay-load prior to split 
+			  	if(dataQuery != null){
+			  		//below were for debuging 
+			  	}
+				//  System.out.println(dataQuery  + "------decoded ");
+				//  System.out.println(dataQuery.length()  + "------decoded ");}
+				//  System.out.println("calling responce ");
+			  responce = ParseRequest(request,ModifiedSince,postHeaderRequest);//.getBytes();
+			  //also for debuging 
+			//  System.out.println("out of responce parse ");
+			//  System.out.println(sendHeader +" ----send header ");
+			// System.out.println(messageBody  +"---message body ");
+			// System.out.println(responce  + "------responce header ");
+			  
+			  if(sendHeader !=null && messageBody != null){
+				  clientOut.writeBytes(sendHeader);
+				  clientOut.write(messageBody,0,messageBody.length);
+			  }
+			  else {
+				 // clientOut.write(responce,0,responce.length);
+				  clientOut.writeBytes(responce);
+			  }
+			  
+			  
+		}// end of try 
+		
+		catch(SocketTimeoutException e){
+			System.out.println("Error. Request Time out ; "+ e.getMessage());
+			try{
+				clientOut.writeBytes("HTTP/1.0 408 Request Timeout");
+			}
+			catch(IOException ex)
+			{
+				System.out.println("Error while sending 408 :" + ex.getMessage());
+				// if unable send 500 message 
+				 try 
+	                {
+	                    clientOut.writeBytes("HTTP/1.0 500 Internal Error");
+	                } 
+	                catch (IOException exc) 
+	                {
+	                    System.out.println("Error while sending 500 Internal Error:" + exc.getMessage());
+	}
+			}
+		}
+		catch (IOException exc){
+			System.out.println("Error while running " + exc.getMessage());
+			// if unable send 500 message 
+			 try 
+                {
+                    clientOut.writeBytes("HTTP/1.0 500 Internal Server Error");
+                } 
+                catch (IOException exd) 
+                {
+                    System.out.println("Error while sending 500 Internal Error:" + exd.getMessage());
+}
+		}
+		
+		
+		closeConnection(Thread.currentThread(),wSocket ,clientIn,clientOut);
+		
+		
+		
+	}/// end of run method 
+
+
+	
+	private void closeConnection(Thread currentThread, Socket wSocket2, BufferedReader clientIn,
+			DataOutputStream clientOut) {
+		 Thread thread = currentThread;
+	        try {
+	        	clientOut.flush();
+	        	clientIn.close();
+	            thread.sleep(500);
+	            wSocket.close();
+	        } catch (IOException | InterruptedException except) {
+	            System.out.println("Error while closing connections: " + except.getMessage());
+	            return;
+	}
+		
+	}
+// method to return encoded string 
+   public String urlDecode(String url){
+	   String decode ="";
+	   
+	   try {
+		   decode=URLDecoder.decode(url,"UTF-8");
+	   }
+	   catch (UnsupportedEncodingException e) {
+           // TODO Auto-generated catch block
+
+       }
+	   return decode;
+   }
+
+   
+    public void parsetokens( String resource ) throws UnknownHostException{
+    	String  delimcol =  "[:]";
+    	 String [] parcestuff ;
+   
+    	 
+    	
+    	
+    	 String trial = Integer.toString(dataQuery.length());
+    	env.put("CONTENT_LENGTH",trial);
+    	//System.out.println(dataQuery.length()+"-----------in parse tokens");
+    	env.put("SCRIPT_NAME", resource);
+    	
+    	if (fromUser !=null){
+    		parcestuff=fromUser.split(delimcol);
+    	//	System.out.println(parcestuff[1]);
+    		String temp=parcestuff[1].trim();
+    	//	System.out.println(temp);
+    		env.put("HTTP_FROM",temp);
+    		
+    		parcestuff =null;
+    		}
+    	if (UserAgent !=null){
+    		parcestuff=UserAgent.split(delimcol);
+    	//	System.out.println(parcestuff[1]);
+    		String temp=parcestuff[1].trim();
+    	//	System.out.println(temp);
+    		env.put("HTTP_USER_AGENT",temp);
+    		
+    		}
+    	String server = InetAddress.getLocalHost().getHostName();
+    	int port = this.wSocket.getPort();
+    	String portNum = Integer.toString(port);
+    	env.put("SERVER_NAME", server);
+    	env.put("SERVER_PORT", portNum);
+    	
+    }
+   
+   
+	private String ParseRequest(String request, Date modifiedSince, String[] postHeaderRequest) {
+		  //Instantiate variables to be used for parsing the request and returning a correct response.
+        String lineSeparator = "\r\n";  // unused put in method instead works dont want to delete stuff 
+        String deliminator = "[ ]";
+        String[] tokens = request.split(deliminator);
+        String command = "badcommand";
+        String resource = "badresource";
+        String version = "badversion";
+        float vers;
+        String delim ="[&]";
+        String[] datavalues =null;
+        String byteString = null;
+        
+        // puts commands and resourse and http type into seperate tokens 
+        if (tokens.length == 3) 
+        {
+            command = tokens[0];
+            resource = tokens[1];
+            version = tokens[2];
+        }
+        
+        //looks at number of token elements should have no more than or less than 3 
+        if (tokens.length != 3 || !resource.startsWith("/") || !command.equals(command.toUpperCase()) || command.toUpperCase().equals("KICK") || !version.substring(0, 5).equals("HTTP/")) {
+        //	System.out.println("in parse method  --- bad request" );
+        	return "HTTP/1.0 400 Bad Request";
+            
+        }
+        
+        
+        
+        //Parse the HTTp version into a float so i can compare it 
+        
+        // in a try catch in case format is wrong and throws error 
+        try 
+        {            vers = Float.parseFloat(version.substring(version.length() - 3));
+        } 
+        catch (NumberFormatException except) 
+        {
+          //  System.out.println("Error in parsing version: " + except.getMessage());
+           // System.out.println("in parse method  --- internal" );
+            return "HTTP/1.0 500 Internal Server Error";
+        } // end of catch 
+
+        //Check for HTTP version greater than 1.0
+        if (vers > 1.0) {
+        	//System.out.println("in parse method  --- 505 returned" );
+            return "HTTP/1.0 505 HTTP Version Not Supported";
+        }
+
+		//Check if command is a valid supported methods of the server 
+        if (!command.equals("POST") && !command.equals("HEAD") && !command.equals("GET") ){
+        //	System.out.println("in parse method  --- 501 returned" );
+            return "HTTP/1.0 501 Not Implemented";
+        }
+        
+        if (resource.startsWith("top_secret") || resource.contains("secret") || resource.contains("top_secret.txt"))
+        {
+        	File mfile = new File("." + resource);
+        	if(!mfile.canRead())
+        	{
+        	//	System.out.println("in parse method  --- 403 returned" );
+        		return "HTTP/1.0 403 Forbidden";
+        	}
+        }
+        if ((command.equals("POST"))){
+        	
+        	//parsing of length 
+
+            if (postHeaderRequest[1]==null){
+            //	System.out.println("in parse method  --- 411 returned" );
+            	return "HTTP/1.0 411 Length Required";}
+            try{
+            	int index = postHeaderRequest[1].indexOf(':') + 1;
+            	String len = postHeaderRequest[1].substring(index).trim();
+            	contentLength = Integer.parseInt(len);
+            	//System.out.println(contentLength  + "---contentLength");
+            }
+            catch (NumberFormatException except) 
+            {
+            //    System.out.println("Error in parsing contentLength: " + except.getMessage());
+             //   System.out.println("in parse method  --- 411 returned" );
+                return "HTTP/1.0 411 Length Required";
+            }
+            
+            
+            //System.out.println("checking content length with 0");
+            if(contentLength == 0){//no data query formated 
+            	return "HTTP/1.0 204 No Content";}
+        	
+        	
+        if (postHeaderRequest[0]==null){
+        //	System.out.println("in parse method  --- 500 returned" );
+        	return "HTTP/1.0 500 Internal Server Error";}
+        
+        
+        // corrected if 
+        if (! resource.endsWith(".cgi"))
+{
+        //	System.out.println("in parse method  --- 405 returned" );
+        	return "HTTP/1.0 405 Method Not Allowed"; }
+        
+        
+        if (resource.endsWith(".cgi")){
+        	File mFile=new File ("." + resource);
+        	
+        	if(!mFile.exists()){
+        		return "HTTP/1.0 404 Not Found"; 
+        	
+        	}
+        	
+        	if( !mFile.canExecute()){
+        //		System.out.println("in parse method cant execute --- 403 returned" );
+        	return "HTTP/1.0 403 Forbidden"; }
+        	if(!mFile.exists()){
+        		return "HTTP/1.0 404 Not Found"; 
+        	
+        	}
+        	
+        	}//end if test excute
+        
+        if(contentLength <= 0){//no data query formated 
+        	dataQuery=null;}
+        
+        if (dataQuery==null){
+        //	System.out.println("in parse method  --- 500 returned" );
+        	return "HTTP/1.0 500 Internal Server Error";}
+        //check if proer format 
+        if (!dataQuery.contains("=")){
+        	return "HTTP/1.0 500 Internal Server Error";
+        }
+        datavalues = dataQuery.split(delim);
+        
+        
+        }//end post if 
+        // need a if to parse query 
+       // if  no 3 sectiond seperating return 501
+        // below is the reponces after all the checking is done 
+        /***************All checking is  completed, below handles each supported server requests    GET,POST, and HEAD HTTP *******************/
+       //  System.out.println("in parse method  --- checks done " );
+        //COMMAND is a valid GET
+        if (command.equals("GET")) 
+        {
+            //Declare Buffered reader to be instantiated in try/catch block.
+       //     System.out.println("REQUEST = " + request);
+            BufferedReader reader;
+            try 
+            {
+                String result = "";
+                String currLine = "";
+                
+                //Open a file containing the specified resource. Sore it in a byte[]
+                // instantiate byte string with file encoding 
+                File file = new File("." + resource);
+                FileInputStream finStream = new FileInputStream(file);
+                byte fileBytes[] = new byte[(int)file.length()];
+                finStream.read(fileBytes);
+               byteString = new String(fileBytes);
+                
+                //Close file input stream
+                if(finStream!=null)
+                	finStream.close();
+                
+                //No exceptions were thrown, so get the header and the body and send it back in a response.
+                String header = addHeader(resource, command, modifiedSince);
+                String response = addBody(header,byteString);
+                setHeader(header);
+                setBody(fileBytes);
+             //   System.out.println(response);
+                return response;
+
+            } 
+            catch (FileNotFoundException except) 
+            {
+              //  System.out.println("Cannot find file: " + except.getMessage());
+                return "HTTP/1.0 404 Not Found";
+            } 
+            catch (IOException ex) 
+            {
+             //   System.out.println("Internal error " + ex.getMessage());
+                return "HTTP/1.0 500 Internal Server Error";
+            }
+          
+        }
+        
+        //Command is a valid POST
+        if(command.equals("POST"))
+        	
+        {    
+        	//System.out.println("in post ------");
+        	String  delimequal =  "[=]";
+        	
+        	String [] comands=null;
+        	byte[] output=null;
+        	char[] outbuf = null;
+        	char inread ;
+              int limit=64000;
+              int nread;
+             
+        	/// needs to be worked on 
+        	//all above past if here contentLength  hold INT  datavalues[] hold split querey 
+        	File postFile =new File("." + resource); //used for path ect for process 
+        	ProcessBuilder Post = new ProcessBuilder (postFile.getAbsolutePath());
+        	 
+        	
+        	env.clear();
+        	
+        	Map<String, String> enviroment = Post.environment();
+        	enviroment.clear();
+        //	System.out.println(postFile.getAbsolutePath());
+            Post.redirectErrorStream(true);
+        	
+        	try {
+        		
+        		parsetokens(  resource);// method to set hash map 
+        	//	System.out.println("in post hash map values ---");
+        		
+        	//	env.forEach((key, value) -> System.out.println(key + " " + value)); /// prints out for decoding 
+        		
+        		// ads all variables to map<string,string>
+        		enviroment.putAll(env);
+        		// print for debug 
+        	//	System.out.println("in post environment values  map values ---");
+        	//	enviroment.forEach((key,value) -> System.out.println(key +":"+value));
+        		
+        	//	System.out.println("in post try---");
+        		
+        	//	BufferedReader in = new BufferedReader(new InputStreamReader(pr.getInputStream()));
+        		Process process = Post.start();				
+	             OutputStream stdin = process.getOutputStream ();
+	             InputStream stdout = process.getInputStream ();
+	                
+	            BufferedReader reader = new BufferedReader (new InputStreamReader(stdout));
+	            PrintWriter writer = new  PrintWriter(new OutputStreamWriter(stdin));
+			
+			//	System.out.println("in post -message--");
+				outbuf=dataQuery.toCharArray();
+				
+				
+			//	System.out.println("in post -message--"  + outbuf.length);
+				
+				
+				writer.write(dataQuery);	
+				writer.flush();writer.flush();writer.flush();
+			    
+		//	System.out.print("post write");
+			//stops here 
+				
+				 // reads all bytes
+               
+               StringBuilder sb = new StringBuilder();
+                
+            //    System.out.print("post first read ");
+                File temp = new File("temp.html");
+				FileWriter fileWriter = new FileWriter(temp);
+				//write string to file 
+				  BufferedWriter bufferedWriter = new BufferedWriter(fileWriter);
+				         while( ( nread = reader.read() ) != -1 ){
+                
+                	inread =(char)nread;
+                	 bufferedWriter.append(inread);
+                	sb.append(inread);
+                } 
+          
+				           
+            byteString = sb.toString();	
+           
+          
+			//	System.out.println(byteString  + "-------BYTE String --------- "+ byteString.length());
+				
+			    // used to save new html code 
+				
+	              
+	               bufferedWriter.flush();
+	               bufferedWriter.close();
+	               fileWriter.close();
+				// just so something goes not part needs work 
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				System.out.println(e.getMessage());;
+			}
+        	
+        	//all done call get to return results 
+        	 request =("GET /temp.html HTTP/1.0");
+        Date	 ModifiedSince = null;
+        String  	response =ParseRequest(request,ModifiedSince,postHeaderRequest);//.getBytes()
+        	//contentLength=byteString.length();
+         //   System.out.println(response);
+            //not valid needs work 
+        	//String header = addHeader(resource, command, modifiedSince);
+           // String response = addBody(header,byteString);
+           // setHeader(header);
+            return response;
+        }
+        
+        // Command is a valid HEAD (return only header, no body)
+        if(command.equals("HEAD")) 
+       	{
+        	
+       		File file = new File(".", resource);
+       		Date lastModified = new Date(file.lastModified());
+ 
+       		//Only return the header if the command is a HEAD
+        	String result = addHeader(resource,command,modifiedSince);
+       		return result;
+}
+		return null;
+	}
+
+
+
+	private void setHeader(String header) {
+		sendHeader = header;
+		return;
+		
+	}
+
+
+
+	private void setBody(byte[] fileBytes) {
+		messageBody = fileBytes;
+		return;
+	}
+
+
+
+	private String addBody(String header, String byteString) {
+		String lineSeparator = "\r\n";
+    	
+		return header + byteString  + lineSeparator + lineSeparator;
+	}
+
+
+
+	private String addHeader(String resource, String command, Date modifiedSince) {
+File file = new File(".", resource);
+    	
+    	//Set DateFormat to GMT. Use dateFormat to format the input date.
+    	DateFormat dateFormat = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z");
+    	dateFormat.setTimeZone(TimeZone.getTimeZone("GMT"));
+    	
+    	Date lastModifiedDate = new Date(file.lastModified());
+    
+    	//Declare a date format string and a date object to store modSince and lastModified in Gmt Format.
+    	String modSinceGmt = "";
+    	Date modSinceGmtDate = null;
+    	String lastModifiedGmt = "";
+    	Date lastModifiedDateGmt = null;
+    	
+    	lastModifiedGmt = dateFormat.format(lastModifiedDate);
+    	
+    	//Logic for formatting dates.
+    	if(modifiedSince!=null)
+    	{
+    		modSinceGmt = dateFormat.format(modifiedSince);
+    		
+    	//	System.out.println("LAST MODIFIED GMT = " + lastModifiedGmt);
+    		try
+    		{
+    			modSinceGmtDate = dateFormat.parse(modSinceGmt);
+    			lastModifiedDateGmt = dateFormat.parse(lastModifiedGmt);
+    		}
+    		catch(Exception except)
+    		{
+    			System.out.println("Error: " + except.getMessage());
+    		}
+    	}
+    		
+    	String lineSeparator = "\r\n";
+    		
+    	if(modSinceGmtDate != null && lastModifiedDateGmt !=null)
+   		{
+   			//Check to see if file has been modified since the If-modifice-since header field. If yes, return error code.
+   			if(lastModifiedDateGmt.before(modSinceGmtDate) && !command.equals("HEAD"))
+   			{
+   				return "HTTP/1.0 304 Not Modified" + lineSeparator + "Expires: Wed, 24 Jul 2020 14:13:49 GMT" + lineSeparator;
+    		}
+    	}
+    	
+    	//Header to be returned.
+    	// puts header together to return to client 
+    	String input = ("HTTP/1.0 200 OK" 
+        		+ lineSeparator 
+                + "Content-Type: " + getContentType(resource) 
+                + lineSeparator 
+                + "Content-Length: " + file.length()
+                + lineSeparator
+                + "Last-Modified: " + lastModifiedGmt
+    			+ lineSeparator
+    			+ "Content-Encoding: identity"
+    			+ lineSeparator
+    			+ "Allow: GET, POST, HEAD"
+    			+ lineSeparator
+    			+ "Expires: Tue, 20 Jul 2019 14:13:49 GMT"
+    			+ lineSeparator
+    			+ lineSeparator);
+    	
+    	
+    	if (command.equals("POST")){
+    		 input = ("HTTP/1.0 200 OK" 
+            		+ lineSeparator 
+                    + "Content-Type: " + getContentType(resource) 
+                    + lineSeparator 
+                    + "Content-Length: " + contentLength
+                    + lineSeparator
+                    + "Last-Modified: " + lastModifiedGmt
+        			+ lineSeparator
+        			+ "Content-Encoding: identity"
+        			+ lineSeparator
+        			+ "Allow: GET, POST, HEAD"
+        			+ lineSeparator
+        			+ "Expires: Tue, 20 Jul 2019 14:13:49 GMT"
+        			+ lineSeparator
+        			+ lineSeparator);
+    	}
+return input;
+	}
+
+
+// gets mime type returns string for mime typing 
+	private String getContentType(String fileRequested) {
+		 if (fileRequested.endsWith(".htm")
+	                || fileRequested.endsWith(".html")) {
+	            return MIME_HTML;
+	        } else if (fileRequested.endsWith(".txt")) {
+	            return MIME_TEXT;
+	        } else if (fileRequested.endsWith(".gif")) {
+	            return MIME_GIF;
+	        } else if (fileRequested.endsWith(".png")) {
+	            return MIME_PNG;
+	        } else if (fileRequested.endsWith(".jpg")
+	                || fileRequested.endsWith(".jpeg")) {
+	            return MIME_JPG;
+	        } else if (fileRequested.endsWith(".class")
+	                || fileRequested.endsWith(".jar")) {
+	            return MIME_OCTET_STREAM;
+	        } else if (fileRequested.endsWith(".pdf")) {
+	            return MIME_PDF;
+	        } else if (fileRequested.endsWith(".gz")
+	                || fileRequested.endsWith(".gzip")) {
+	            return MIME_XGZIP;
+	        } else if (fileRequested.endsWith(".zip")) {
+	            return MIME_ZIP;
+	        } else {
+	            return MIME_OCTET_STREAM;
+	}
+	}
+
+
+
+	//Method to get content length
+	// not called thought might need 
+    private long getContentLength(File resource) {
+        return resource.length();
+}
+	
+	
+	
+	
+	
+	
+	// method to return format  of date 
+
+	private Date parseRequestHead(String requestHeader) {
+		DateFormat dateFormat = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z");
+    	dateFormat.setTimeZone(TimeZone.getTimeZone("GMT"));
+    	Date date = null;
+    	try{
+    		date = dateFormat.parse(requestHeader.substring(19));
+    	}catch(Exception except)
+    	{	
+    		System.out.println(except.getMessage());
+    		return null;
+    	}
+return date;
+	}
+	
+}/// end of worthread class 
